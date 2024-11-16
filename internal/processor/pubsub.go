@@ -5,71 +5,59 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"sync"
 	"time"
 
 	"cloud.google.com/go/pubsub"
-	"github.com/fraser-isbester/fwd/pkg/types"
+	cloudevents "github.com/cloudevents/sdk-go/v2"
 )
 
-// PubSubConfig holds configuration for the PubSub processor
 type PubSubConfig struct {
-	ProjectID string
-	TopicName string
-	// Buffer size for the incoming event channel
-	BufferSize int
-	// PubSub specific settings
-	BatchSize    int           // Number of messages to batch
-	BatchBytes   int           // Size of message batches in bytes
-	BatchTimeout time.Duration // How long to wait before sending a batch
+	ProjectID    string
+	TopicName    string
+	BatchSize    int
+	BatchBytes   int
+	BatchTimeout time.Duration
 }
 
-// DefaultPubSubConfig returns sensible defaults
-func DefaultPubSubConfig() PubSubConfig {
+func DefaultConfig() PubSubConfig {
 	return PubSubConfig{
-		BufferSize:   1000,
 		BatchSize:    100,
 		BatchBytes:   1000000, // 1MB
 		BatchTimeout: 100 * time.Millisecond,
 	}
 }
 
-// PubSubProcessor implements Processor interface for Google Cloud Pub/Sub
 type PubSubProcessor struct {
 	config    PubSubConfig
 	client    *pubsub.Client
 	topic     *pubsub.Topic
-	sources   []DataSource
-	eventChan chan *types.Event
-	wg        sync.WaitGroup
+	eventChan chan *cloudevents.Event
+	done      chan struct{}
 }
 
-// NewPubSubProcessor creates a new GCP Pub/Sub processor
 func NewPubSubProcessor(config PubSubConfig) (*PubSubProcessor, error) {
 	ctx := context.Background()
 
 	client, err := pubsub.NewClient(ctx, config.ProjectID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create pubsub client: %v", err)
+		return nil, fmt.Errorf("failed to create pubsub client: %w", err)
 	}
 
 	topic := client.Topic(config.TopicName)
 	exists, err := topic.Exists(ctx)
 	if err != nil {
 		client.Close()
-		return nil, fmt.Errorf("failed to check if topic exists: %v", err)
+		return nil, fmt.Errorf("failed to check if topic exists: %w", err)
 	}
 
 	if !exists {
-		fmt.Printf("Creating topic %s\n", config.TopicName)
 		topic, err = client.CreateTopic(ctx, config.TopicName)
 		if err != nil {
 			client.Close()
-			return nil, fmt.Errorf("failed to create topic: %v", err)
+			return nil, fmt.Errorf("failed to create topic: %w", err)
 		}
 	}
 
-	// Configure publisher settings
 	topic.PublishSettings = pubsub.PublishSettings{
 		ByteThreshold:  config.BatchBytes,
 		CountThreshold: config.BatchSize,
@@ -80,100 +68,82 @@ func NewPubSubProcessor(config PubSubConfig) (*PubSubProcessor, error) {
 		config:    config,
 		client:    client,
 		topic:     topic,
-		eventChan: make(chan *types.Event, config.BufferSize),
+		eventChan: make(chan *cloudevents.Event, 1000),
+		done:      make(chan struct{}),
 	}, nil
 }
 
-// RegisterSource implements Processor interface
-func (p *PubSubProcessor) RegisterSource(source DataSource) {
-	p.sources = append(p.sources, source)
+func (p *PubSubProcessor) EventChannel() chan<- *cloudevents.Event {
+	return p.eventChan
 }
 
-// Start implements Processor interface
 func (p *PubSubProcessor) Start(ctx context.Context) error {
-	// Start all registered sources
-	for _, source := range p.sources {
-		if err := source.Start(ctx, p.eventChan); err != nil {
-			return fmt.Errorf("failed to start source %s: %v", source.Name(), err)
-		}
-	}
-
-	// Start processing events
-	p.wg.Add(1)
+	log.Printf("Starting PubSub processor for topic: %s", p.config.TopicName)
 	go p.processEvents(ctx)
-
 	return nil
 }
 
 func (p *PubSubProcessor) processEvents(ctx context.Context) {
-	defer p.wg.Done()
+	defer close(p.done)
 
 	for {
 		select {
 		case event, ok := <-p.eventChan:
 			if !ok {
+				log.Printf("Event channel closed, stopping processor")
 				return
 			}
-
-			if err := p.publishEvent(ctx, event); err != nil {
-				log.Printf("Error publishing event to Pub/Sub: %v", err)
-				// TODO: Consider implementing retry logic or dead letter queue
+			if event == nil {
+				log.Printf("Received nil event, skipping")
 				continue
 			}
-
+			if err := p.publishEvent(ctx, event); err != nil {
+				log.Printf("Error publishing event: %v", err)
+			}
 		case <-ctx.Done():
+			log.Printf("Context cancelled, stopping processor")
 			return
 		}
 	}
 }
 
-func (p *PubSubProcessor) publishEvent(ctx context.Context, event *types.Event) error {
-	data, err := json.Marshal(event)
-	if err != nil {
-		return fmt.Errorf("failed to marshal event: %v", err)
+func (p *PubSubProcessor) publishEvent(ctx context.Context, event *cloudevents.Event) error {
+	if event == nil {
+		return fmt.Errorf("cannot publish nil event")
 	}
 
+	// Serialize the entire CloudEvent
+	data, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event: %w", err)
+	}
+
+	// Create PubSub message with CloudEvents attributes
 	msg := &pubsub.Message{
 		Data: data,
 		Attributes: map[string]string{
-			"type":   event.Type,
-			"source": event.Source,
-			"id":     event.ID,
+			"ce-id":        event.ID(),
+			"ce-source":    event.Source(),
+			"ce-type":      event.Type(),
+			"content-type": "application/cloudevents+json; charset=UTF-8",
 		},
 	}
 
+	// Publish and wait for result
 	result := p.topic.Publish(ctx, msg)
-
 	id, err := result.Get(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to publish message: %v", err)
+		return fmt.Errorf("failed to publish message: %w", err)
 	}
 
-	log.Printf("Published event %s to Pub/Sub with message ID: %s", event.ID, id)
+	log.Printf("Published %s event %s to %s with id %s", event.Type(), event.ID(), p.topic.ID(), id)
 	return nil
 }
 
-// Stop implements Processor interface
 func (p *PubSubProcessor) Stop() error {
-	// Stop all sources first
-	for _, source := range p.sources {
-		if err := source.Stop(); err != nil {
-			log.Printf("Error stopping source %s: %v", source.Name(), err)
-		}
-	}
-
-	// Close the event channel
+	log.Printf("Stopping PubSub processor")
 	close(p.eventChan)
-
-	// Wait for event processing to complete
-	p.wg.Wait()
-
-	// Flush any pending pub/sub messages and clean up resources
+	<-p.done
 	p.topic.Stop()
 	return p.client.Close()
-}
-
-// Name implements Processor interface
-func (p *PubSubProcessor) Name() string {
-	return fmt.Sprintf("pubsub-%s", p.config.TopicName)
 }

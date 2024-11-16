@@ -1,3 +1,4 @@
+// cmd/fwd/main.go
 package main
 
 import (
@@ -8,32 +9,39 @@ import (
 	"syscall"
 
 	"github.com/fraser-isbester/fwd/internal/processor"
-	"github.com/fraser-isbester/fwd/internal/receiver"
+	"github.com/fraser-isbester/fwd/internal/source"
 )
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
+	log.Println("Starting...")
 
-	// Create processor configuration
-	config := processor.DefaultPubSubConfig()
-	config.ProjectID = "main-414707"
-	config.TopicName = "opslog-events"
-
-	// Initialize the processor
-	proc, err := processor.NewPubSubProcessor(config)
+	// Initialize processor
+	proc, err := processor.NewPubSubProcessor(processor.PubSubConfig{
+		ProjectID: "main-414707",
+		TopicName: "opslog-events",
+	})
 	if err != nil {
 		log.Fatalf("Failed to create processor: %v", err)
 	}
 
-	// Setup and register webhook receiver
-	webhookReceiver := receiver.NewWebhookReceiver(receiver.DefaultConfig())
-	githubHandler := receiver.NewGitHubWebhookHandler("secret")
-	webhookReceiver.RegisterHandler("github", githubHandler)
-	proc.RegisterSource(webhookReceiver)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Start the processor
+	// Start processor
 	if err := proc.Start(ctx); err != nil {
 		log.Fatalf("Failed to start processor: %v", err)
+	}
+
+	// Setup webhook source with GitHub handler
+	webhookSrc := source.NewWebhookSource(8080)
+
+	// Add GitHub webhook handler
+	githubHandler := source.NewGitHubHandler("/webhook/github", "secret")
+	webhookSrc.AddHandlerFunc(githubHandler.Path(), githubHandler.CreateHandler(proc.EventChannel()))
+
+	// Start webhook server
+	if err := webhookSrc.Start(ctx); err != nil {
+		log.Fatalf("Failed to start webhook source: %v", err)
 	}
 
 	// Wait for shutdown signal
@@ -41,9 +49,14 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
-	log.Println("Shutting down gracefully...")
-	cancel()
+	log.Println("Shutting down...")
+
+	// Shutdown in reverse order
+	if err := webhookSrc.Stop(); err != nil {
+		log.Printf("Error stopping webhook source: %v", err)
+	}
+
 	if err := proc.Stop(); err != nil {
-		log.Printf("Error during shutdown: %v", err)
+		log.Printf("Error stopping processor: %v", err)
 	}
 }
