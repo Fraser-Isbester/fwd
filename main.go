@@ -16,7 +16,7 @@ func main() {
 
 	// Create processor configuration
 	config := processor.DefaultPubSubConfig()
-	config.ProjectID = "fraser-eng-dev"
+	config.ProjectID = "main-414707"
 	config.TopicName = "opslog-events"
 
 	// Initialize the processor
