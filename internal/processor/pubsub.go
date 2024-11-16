@@ -61,6 +61,7 @@ func NewPubSubProcessor(config PubSubConfig) (*PubSubProcessor, error) {
 	}
 
 	if !exists {
+		fmt.Printf("Creating topic %s\n", config.TopicName)
 		topic, err = client.CreateTopic(ctx, config.TopicName)
 		if err != nil {
 			client.Close()
