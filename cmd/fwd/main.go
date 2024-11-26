@@ -1,4 +1,3 @@
-// cmd/fwd/main.go
 package main
 
 import (
@@ -44,6 +43,17 @@ func main() {
 		log.Fatalf("Failed to start webhook source: %v", err)
 	}
 
+	// Initialize Kubernetes source
+	k8sSrc, err := source.NewKubeSource()
+	if err != nil {
+		log.Fatalf("Failed to create kubernetes source: %v", err)
+	}
+
+	// Start Kubernetes source
+	if err := k8sSrc.Start(ctx, proc.EventChannel()); err != nil {
+		log.Fatalf("Failed to start kubernetes source: %v", err)
+	}
+
 	// Wait for shutdown signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -52,6 +62,10 @@ func main() {
 	log.Println("Shutting down...")
 
 	// Shutdown in reverse order
+	if err := k8sSrc.Stop(); err != nil {
+		log.Printf("Error stopping kubernetes source: %v", err)
+	}
+
 	if err := webhookSrc.Stop(); err != nil {
 		log.Printf("Error stopping webhook source: %v", err)
 	}

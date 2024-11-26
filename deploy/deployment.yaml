@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fwd
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fwd
+  template:
+    metadata:
+      labels:
+        app: fwd
+    spec:
+      serviceAccountName: fwd-sa
+      containers:
+      - name: fwd
+        image: localhost:5001/fwd:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: "/gcp/credentials.json"
+        envFrom:
+        - configMapRef:
+            name: fwd-config
+        - secretRef:
+            name: fwd-secrets
+        volumeMounts:
+        - name: google-creds
+          mountPath: "/gcp"
+          readOnly: true
+      volumes:
+      - name: google-creds
+        secret:
+          secretName: google-credentials
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fwd
+  namespace: default
+spec:
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: fwd

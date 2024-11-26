@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fwd-config
+  namespace: default
+data:
+  PROJECT_ID: "main-414707"
+  TOPIC_NAME: "opslog-events"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fwd-secrets
+  namespace: default
+type: Opaque
+data:
+  GITHUB_SECRET: "c2VjcmV0"

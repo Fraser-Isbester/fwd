@@ -112,21 +112,35 @@ func (p *PubSubProcessor) publishEvent(ctx context.Context, event *cloudevents.E
 		return fmt.Errorf("cannot publish nil event")
 	}
 
-	// Serialize the entire CloudEvent
+	// Serialize the CloudEvent
 	data, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
 
-	// Create PubSub message with CloudEvents attributes
+	// Create attributes map for PubSub message
+	attrs := map[string]string{
+		"ce-id":          event.ID(),
+		"ce-source":      event.Source(),
+		"ce-type":        event.Type(),
+		"ce-specversion": event.SpecVersion(),
+		"content-type":   "application/cloudevents+json; charset=UTF-8",
+	}
+
+	// Add any CloudEvent extensions as PubSub attributes
+	for name, value := range event.Extensions() {
+		// Convert extension value to string
+		if str, ok := value.(string); ok {
+			attrs[name] = str
+		} else if strVal, err := json.Marshal(value); err == nil {
+			attrs[name] = string(strVal)
+		}
+	}
+
+	// Create PubSub message
 	msg := &pubsub.Message{
-		Data: data,
-		Attributes: map[string]string{
-			"ce-id":        event.ID(),
-			"ce-source":    event.Source(),
-			"ce-type":      event.Type(),
-			"content-type": "application/cloudevents+json; charset=UTF-8",
-		},
+		Data:       data,
+		Attributes: attrs,
 	}
 
 	// Publish and wait for result
@@ -136,7 +150,7 @@ func (p *PubSubProcessor) publishEvent(ctx context.Context, event *cloudevents.E
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 
-	log.Printf("Published %s event %s to %s with id %s", event.Type(), event.ID(), p.topic.ID(), id)
+	log.Printf("Published event %s with id %s", event.ID(), id)
 	return nil
 }
 
