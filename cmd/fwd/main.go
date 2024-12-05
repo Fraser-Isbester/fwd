@@ -16,7 +16,7 @@ func main() {
 
 	// Initialize processor
 	proc, err := processor.NewPubSubProcessor(processor.PubSubConfig{
-		ProjectID: "main-414707",
+		// Empty ProjectID will pull the quota project from ADC
 		TopicName: "opslog-events",
 	})
 	if err != nil {

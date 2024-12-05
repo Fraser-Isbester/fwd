@@ -9,6 +9,8 @@ import (
 
 	"cloud.google.com/go/pubsub"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
+	"google.golang.org/api/option"
+	"google.golang.org/api/transport"
 )
 
 type PubSubConfig struct {
@@ -38,6 +40,22 @@ type PubSubProcessor struct {
 func NewPubSubProcessor(config PubSubConfig) (*PubSubProcessor, error) {
 	ctx := context.Background()
 
+	// Load project id from application defatul credentials
+	if config.ProjectID == "" {
+		// Load the default credentials
+		creds, err := transport.Creds(ctx, option.WithoutAuthentication())
+		if err != nil {
+			return nil, fmt.Errorf("failed to load ADC: %w", err)
+		}
+		fmt.Println(creds)
+		// Check there is a project ID in the credentials
+		if creds.ProjectID == "" {
+			return nil, fmt.Errorf("no quota project ID found in ADC")
+		}
+		// Use the project ID from the credentials
+		config.ProjectID = creds.ProjectID
+	}
+
 	client, err := pubsub.NewClient(ctx, config.ProjectID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pubsub client: %w", err)
@@ -50,6 +68,7 @@ func NewPubSubProcessor(config PubSubConfig) (*PubSubProcessor, error) {
 		return nil, fmt.Errorf("failed to check if topic exists: %w", err)
 	}
 
+	// Create topic if it doesn't exist
 	if !exists {
 		topic, err = client.CreateTopic(ctx, config.TopicName)
 		if err != nil {
@@ -112,7 +131,7 @@ func (p *PubSubProcessor) publishEvent(ctx context.Context, event *cloudevents.E
 		return fmt.Errorf("cannot publish nil event")
 	}
 
-	// Serialize the CloudEvent
+	// Serialize the CloudEventn data
 	data, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
@@ -145,12 +164,16 @@ func (p *PubSubProcessor) publishEvent(ctx context.Context, event *cloudevents.E
 
 	// Publish and wait for result
 	result := p.topic.Publish(ctx, msg)
-	id, err := result.Get(ctx)
+	_, err = result.Get(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 
-	log.Printf("Published event %s with id %s", event.ID(), id)
+	log.Printf("Published event src=%s typ=%s id=%s",
+		msg.Attributes["ce-source"],
+		msg.Attributes["ce-type"],
+		msg.Attributes["ce-id"],
+	)
 	return nil
 }
 

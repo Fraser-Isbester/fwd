@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -87,18 +88,26 @@ func (k *KubeSource) handleEvent(event *corev1.Event) {
 	// Create CloudEvent
 	ce := cloudevents.NewEvent()
 
-	// Required attributes
+	fmt.Println(event)
+
+	// Set attributes
 	ce.SetID(string(event.UID))
 	ce.SetType(fmt.Sprintf("com.kubernetes.%s.%s",
 		strings.ToLower(event.InvolvedObject.Kind),
 		strings.ToLower(event.Reason)))
-	// TODO: extract canonical cluster name
-	ce.SetSource(fmt.Sprintf("kubernetes://unknown/%s/%s/%s",
-		event.InvolvedObject.Namespace,
-		event.InvolvedObject.Kind,
-		event.InvolvedObject.Name))
-
 	ce.SetTime(event.LastTimestamp.Time)
+	ce.SetSpecVersion(cloudevents.VersionV1)
+	ce.SetDataContentType("application/json")
+	ce.SetSubject(fmt.Sprintf("%s/%s", event.InvolvedObject.Kind, event.InvolvedObject.Name))
+
+	// Source defined as: kubernetes://{ cluster name }/{ namespace }
+	// TODO: extract canonical cluster name
+	namespace := event.InvolvedObject.Namespace
+	if namespace == "" {
+		ce.SetSource("kubernetes://unknown")
+	} else {
+		ce.SetSource(fmt.Sprintf("kubernetes://unknown/%s", namespace))
+	}
 
 	// Add key k8s fields as extensions for filtering/routing
 	ce.SetExtension("namespace", event.InvolvedObject.Namespace)
@@ -108,31 +117,19 @@ func (k *KubeSource) handleEvent(event *corev1.Event) {
 	ce.SetExtension("type", event.Type) // Normal or Warning
 	ce.SetExtension("component", event.Source.Component)
 
-	// Main event data
-	data := map[string]interface{}{
-		"message":        event.Message,
-		"count":          event.Count,
-		"firstTimestamp": event.FirstTimestamp.Time,
-		"lastTimestamp":  event.LastTimestamp.Time,
-		"involvedObject": map[string]string{
-			"kind":      event.InvolvedObject.Kind,
-			"name":      event.InvolvedObject.Name,
-			"namespace": event.InvolvedObject.Namespace,
-		},
+	// Set the raw JSON payload as the data
+	eventJSON, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("Failed to marshal event to JSON: %v", err)
+		return
 	}
-
-	if err := ce.SetData(cloudevents.ApplicationJSON, data); err != nil {
+	if err := ce.SetData(cloudevents.ApplicationJSON, eventJSON); err != nil {
 		log.Printf("Failed to set event data: %v", err)
 		return
 	}
 
 	select {
 	case k.eventChan <- &ce:
-		log.Printf("Published event: [%s] %s/%s: %s",
-			event.Type,
-			event.InvolvedObject.Kind,
-			event.InvolvedObject.Name,
-			event.Message)
 	default:
 		log.Printf("Event channel full, dropping event: %s", ce.ID())
 	}

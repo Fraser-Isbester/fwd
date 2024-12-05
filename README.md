@@ -16,11 +16,11 @@ Fan-in style event collection and forwarding. Sources naively accept events, map
            │          │
   ─events─▶│   k8s    │
            │          │
-           └────┬─────┘      ┌─────────┐
+           └────┬─────┘     ┌──────────┐
                 │           │          │
                 ├─events──▶ │  pubsub  │
                 │           │          │
-           ┌────┴─────┐     └─────────┘
+           ┌────┴─────┐     └──────────┘
            │          │
 ─webhooks─▶│  github  │
            │          │

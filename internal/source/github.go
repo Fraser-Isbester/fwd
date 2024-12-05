@@ -88,6 +88,7 @@ func (h *GitHubHandler) CreateHandler(eventChan chan<- *cloudevents.Event) http.
 		// Create CloudEvent
 		event := cloudevents.NewEvent()
 		event.SetID(r.Header.Get("X-GitHub-Delivery"))
+		// Source defined as the originating github repository ex. github.com/cloudevents/sdk-go
 		event.SetSource(fmt.Sprintf("github.com/%s", payload.Repository.FullName))
 		event.SetType(fmt.Sprintf("com.github.%s", eventType))
 		event.SetTime(time.Now().UTC())
