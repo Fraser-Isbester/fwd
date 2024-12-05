@@ -17,8 +17,10 @@ func main() {
 	// Initialize processor
 	proc, err := processor.NewPubSubProcessor(processor.PubSubConfig{
 		// Empty ProjectID will pull the quota project from ADC
+		ProjectID: os.Getenv("GOOGLE_PROJECT_ID"),
 		TopicName: "opslog-events",
 	})
+
 	if err != nil {
 		log.Fatalf("Failed to create processor: %v", err)
 	}
@@ -31,12 +33,16 @@ func main() {
 		log.Fatalf("Failed to start processor: %v", err)
 	}
 
-	// Setup webhook source with GitHub handler
+	// Setup webhook source with handlers
 	webhookSrc := source.NewWebhookSource(8080)
 
 	// Add GitHub webhook handler
-	githubHandler := source.NewGitHubHandler("/webhook/github", "secret")
+	githubHandler := source.NewGitHubHandler("/webhook/github", os.Getenv("GITHUB_WEBHOOK_SECRET"))
 	webhookSrc.AddHandlerFunc(githubHandler.Path(), githubHandler.CreateHandler(proc.EventChannel()))
+
+	// Add Terraform Cloud webhook handler
+	terraformHandler := source.NewTerraformCloudHandler("/webhook/terraform", os.Getenv("TERRAFORM_WEBHOOK_SECRET"))
+	webhookSrc.AddHandlerFunc(terraformHandler.Path(), terraformHandler.CreateHandler(proc.EventChannel()))
 
 	// Start webhook server
 	if err := webhookSrc.Start(ctx); err != nil {

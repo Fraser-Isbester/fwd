@@ -23,6 +23,16 @@ spec:
         env:
         - name: GOOGLE_APPLICATION_CREDENTIALS
           value: "/gcp/credentials.json"
+        - name: GITHUB_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: fwd-secrets
+              key: github-webhook-secret
+        - name: TERRAFORM_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: fwd-secrets
+              key: terraform-webhook-secret
         envFrom:
         - configMapRef:
             name: fwd-config

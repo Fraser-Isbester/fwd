@@ -9,8 +9,6 @@ import (
 
 	"cloud.google.com/go/pubsub"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
-	"google.golang.org/api/option"
-	"google.golang.org/api/transport"
 )
 
 type PubSubConfig struct {
@@ -39,22 +37,6 @@ type PubSubProcessor struct {
 
 func NewPubSubProcessor(config PubSubConfig) (*PubSubProcessor, error) {
 	ctx := context.Background()
-
-	// Load project id from application defatul credentials
-	if config.ProjectID == "" {
-		// Load the default credentials
-		creds, err := transport.Creds(ctx, option.WithoutAuthentication())
-		if err != nil {
-			return nil, fmt.Errorf("failed to load ADC: %w", err)
-		}
-		fmt.Println(creds)
-		// Check there is a project ID in the credentials
-		if creds.ProjectID == "" {
-			return nil, fmt.Errorf("no quota project ID found in ADC")
-		}
-		// Use the project ID from the credentials
-		config.ProjectID = creds.ProjectID
-	}
 
 	client, err := pubsub.NewClient(ctx, config.ProjectID)
 	if err != nil {

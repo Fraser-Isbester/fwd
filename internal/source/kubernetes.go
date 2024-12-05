@@ -88,8 +88,6 @@ func (k *KubeSource) handleEvent(event *corev1.Event) {
 	// Create CloudEvent
 	ce := cloudevents.NewEvent()
 
-	fmt.Println(event)
-
 	// Set attributes
 	ce.SetID(string(event.UID))
 	ce.SetType(fmt.Sprintf("com.kubernetes.%s.%s",
